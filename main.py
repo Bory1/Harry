@@ -1,5 +1,6 @@
 import pygame
 import random
+import sqlite3
 
 # Inicializace hry
 pygame.init()
@@ -14,6 +15,68 @@ pygame.display.set_caption("Bitva s mozkomory")
 fps = 60
 clock = pygame.time.Clock()
 
+class ScoreDatabase:
+    def __init__(self):
+        """Inicializace databáze"""
+        self.create_tables()
+
+    def create_tables(self):
+        """Vytvoří tabulku pro skóre a high score (pokud neexistují)"""
+        conn = sqlite3.connect("score.db")
+        cursor = conn.cursor()
+
+        # Tabulka pro jednotlivá skóre
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS score (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_score INTEGER
+            )
+        """)
+
+        # Tabulka pro high score (pouze jeden řádek)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS high_score (
+                id INTEGER PRIMARY KEY,
+                max_score INTEGER DEFAULT 0
+            )
+        """)
+
+        # Pokud v tabulce high_score není záznam, vložíme základní hodnotu
+        cursor.execute("SELECT COUNT(*) FROM high_score")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO high_score (id, max_score) VALUES (1, 0)")
+
+        conn.commit()
+        conn.close()
+
+    def save_score(self, score):
+        """Uloží aktuální skóre do databáze a aktualizuje high score, pokud je vyšší"""
+        conn = sqlite3.connect("score.db")
+        cursor = conn.cursor()
+
+        # Uložení skóre do tabulky score
+        cursor.execute("INSERT INTO score (game_score) VALUES (?)", (score,))
+
+        # Načtení aktuálního high score
+        cursor.execute("SELECT max_score FROM high_score WHERE id = 1")
+        current_high = cursor.fetchone()[0]
+
+        # Pokud je nové skóre vyšší, aktualizujeme high score
+        if score > current_high:
+            cursor.execute("UPDATE high_score SET max_score = ? WHERE id = 1", (score,))
+
+        conn.commit()
+        conn.close()
+
+    def load_high_score(self):
+        """Načte nejvyšší dosažené skóre"""
+        conn = sqlite3.connect("score.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT max_score FROM high_score WHERE id = 1")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else 0  # Vrátíme 0, pokud neexistuje high score
+
 
 # Classy
 class Game:
@@ -26,6 +89,10 @@ class Game:
 
         self.our_player = our_player
         self.group_of_mozkomors = group_of_mozkomors
+
+        # Inicializace databáze
+        self.score_db = ScoreDatabase()
+        self.high_score = self.score_db.load_high_score()  # Načteme high score
 
         # Hudba v pozadí
         pygame.mixer.music.load("media/bg-music-hp.wav")
@@ -81,9 +148,14 @@ class Game:
         catch_text_rect.centerx = width // 2
         catch_text_rect.top = 5
 
+        # Texty
         score_text = self.potter_font.render(f"Skore: {self.score}", True, dark_yellow)
         score_text_rect = score_text.get_rect()
         score_text_rect.topleft = (10, 4)
+
+        high_score_text = self.potter_font.render(f"Nejvyssi skore: {self.high_score}", True, dark_yellow)
+        high_score_text_rect = high_score_text.get_rect()
+        high_score_text_rect.topright = (width -5, 65)
 
         lives_text = self.potter_font.render(f"Zivoty: {self.our_player.lives}", True, dark_yellow)
         lives_text_rect = lives_text.get_rect()
@@ -104,7 +176,9 @@ class Game:
 
         # Vykreslení (blitting) do obrazovky
         screen.blit(catch_text, catch_text_rect)
+        # Vykreslení na obrazovku
         screen.blit(score_text, score_text_rect)
+        screen.blit(high_score_text, high_score_text_rect)
         screen.blit(lives_text, lives_text_rect)
         screen.blit(round_text, round_text_rect)
         screen.blit(time_text, time_text_rect)
@@ -225,6 +299,12 @@ class Game:
 
     # Resetuje hru do výchozího stavu
     def reset_game(self):
+     # Uložení skóre do databáze
+        self.score_db.save_score(self.score)
+    
+    # Aktualizace high score (po uložení do DB, aby se hned zobrazil nový rekord)
+        self.high_score = self.score_db.load_high_score()
+       
         self.score = 0
         self.round_number = 0
 
@@ -361,4 +441,3 @@ while lets_continue:
 
 # Ukončení hry
 pygame.quit()
-
